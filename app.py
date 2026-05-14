@@ -243,12 +243,11 @@ def call_gemini(prompt: str) -> str:
     model_name = pick_model()
     model = genai.GenerativeModel(model_name)
     resp = model.generate_content(
-        prompt,
-        generation_config={
-            "temperature": 0.9,
-            "max_output_tokens": 600,
-            "response_mime_type": "application/json",
-        },
+    prompt,
+    generation_config={
+        "temperature": 0.9,
+        "max_output_tokens": 600,
+    },
     )
     return (resp.text or "").strip()
 
