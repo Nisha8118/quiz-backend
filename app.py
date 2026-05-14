@@ -237,19 +237,25 @@ JSON shape:
 {asked_block}""".strip()
 
 
-def call_gemini(prompt: str) -> str:
+def call_gemini(prompt: str) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
+
     model_name = pick_model()
     model = genai.GenerativeModel(model_name)
-    resp = model.generate_content(
-    prompt,
-    generation_config={
-        "temperature": 0.9,
-        "max_output_tokens": 600,
-    },
-    )
-    return (resp.text or "").strip()
+
+    resp = model.generate_content(prompt)
+
+    raw = (resp.text or "").strip()
+
+    log.info(f"GEMINI RAW RESPONSE: {raw}")
+
+    parsed = safe_parse_json(raw)
+
+    if not parsed:
+        raise RuntimeError(f"Could not parse Gemini JSON: {raw}")
+
+    return parsed
 
 
 def normalize_question(parsed: dict) -> Optional[dict]:
@@ -353,8 +359,7 @@ def question(req: QuestionRequest):
     last_err = None
     for _ in range(2):
         try:
-            raw = call_gemini(prompt)
-            parsed = normalize_question(safe_parse_json(raw))
+            parsed = normalize_question(call_gemini(prompt))
             if parsed and parsed["question"].strip() not in set(asked):
                 return parsed
         except Exception as e:
