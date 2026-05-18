@@ -81,8 +81,8 @@ class QuestionRequest(BaseModel):
     mode: str = "subject"          # "subject" or "pdf"
     subject: Optional[str] = None
     difficulty: str = "medium"     # easy | medium | hard
-    pdf_id: Optional[str] = None
     question_type: str = "mixed"
+    pdf_id: Optional[str] = None
     asked: List[str] = Field(default_factory=list)
 
 
@@ -184,101 +184,164 @@ def fallback_question(asked: List[str]) -> dict:
         pool = FALLBACK_BANK
     return dict(random.choice(pool))
 
-def build_pdf_prompt(context: str, asked: List[str]) -> str:
+def build_pdf_prompt(context: str, asked: List[str], question_type: str = "mixed") -> str:
     asked_block = ""
+
     if asked:
         bullets = "\n".join(f"- {q}" for q in asked[-15:])
-        asked_block = f"\nDo NOT repeat or paraphrase these:\n{bullets}\n"
-    return f"""You are a quiz generator. Read the DOCUMENT and create ONE multiple-choice question.
+        asked_block = f"\nDo NOT repeat these questions:\n{bullets}\n"
 
-Rules:
-- Question must be answerable using only the DOCUMENT.
-- Provide exactly 4 options labeled A, B, C, D. Exactly one correct.
-- Output ONLY a JSON object, no prose, no markdown.
+    type_instruction = {
+        "mcq": "Generate ONLY MCQ questions.",
+        "fill_blank": "Generate ONLY fill in the blank questions.",
+        "one_word": "Generate ONLY one word answer questions.",
+        "analogy": "Generate ONLY analogy questions.",
+        "mixed": "Generate a MIX of MCQ, fill blank, one word, and analogy questions."
+    }.get(question_type, "Generate mixed question types.")
 
-JSON shape:
-{{"question":"...","options":{{"A":"...","B":"...","C":"...","D":"..."}},"answer":"A","explanation":"..."}}
-{asked_block}
-DOCUMENT:
-\"\"\"{context}\"\"\"
-""".strip()
-
-
-def build_subject_prompt(subject: str, difficulty: str, asked: List[str]) -> str:
-    asked_block = ""
-    if asked:
-        bullets = "\n".join(f"- {q}" for q in asked[-20:])
-        asked_block = f"""
-Do NOT repeat these questions:
-{bullets}
-"""
     return f"""
 You are a quiz generator.
-Generate 10 UNIQUE quiz questions.
-Subject: {subject}
-Difficulty: {difficulty}
-Use a MIX of:
+
+Read the DOCUMENT and generate ONE quiz question.
+
+{type_instruction}
+
+Question types allowed:
 - mcq
 - fill_blank
 - one_word
 - analogy
-IMPORTANT RULES:
-1. Return ONLY valid JSON
-2. No markdown
-3. No explanations outside JSON
-4. Generate exactly 10 questions
-5. Questions must match the subject
+
+Rules:
+- Question MUST come from the DOCUMENT.
+- Output ONLY valid JSON.
+- No markdown.
+- No explanations outside JSON.
+
+JSON formats:
+
+MCQ:
+{{
+  "type": "mcq",
+  "question": "...",
+  "options": {{
+    "A": "...",
+    "B": "...",
+    "C": "...",
+    "D": "..."
+  }},
+  "answer": "A",
+  "explanation": "..."
+}}
+
+Fill Blank:
+{{
+  "type": "fill_blank",
+  "question": "The capital of France is ____.",
+  "answer": "Paris",
+  "explanation": "..."
+}}
+
+One Word:
+{{
+  "type": "one_word",
+  "question": "What process do plants use to make food?",
+  "answer": "Photosynthesis",
+  "explanation": "..."
+}}
+
+Analogy:
+{{
+  "type": "analogy",
+  "question": "Bird : Nest :: Bee : ?",
+  "answer": "Hive",
+  "explanation": "..."
+}}
+
+{asked_block}
+
+DOCUMENT:
+\"\"\"{context}\"\"\"
+""".strip()
+def build_subject_prompt(subject: str, difficulty: str, asked: List[str], question_type: str = "mixed") -> str:
+
+    asked_block = ""
+
+    if asked:
+        bullets = "\n".join(f"- {q}" for q in asked[-20:])
+        asked_block = f"\nDo NOT repeat these questions:\n{bullets}\n"
+
+    type_instruction = {
+        "mcq": "Generate ONLY MCQ questions.",
+        "fill_blank": "Generate ONLY fill in the blank questions.",
+        "one_word": "Generate ONLY one word answer questions.",
+        "analogy": "Generate ONLY analogy questions.",
+        "mixed": "Generate a MIX of MCQ, fill blank, one word, and analogy questions."
+    }.get(question_type, "Generate mixed question types.")
+
+    return f"""
+You are a quiz generator.
+
+Generate ONE quiz question.
+
+Subject: {subject}
+Difficulty: {difficulty}
+
+{type_instruction}
+
+Question types allowed:
+- mcq
+- fill_blank
+- one_word
+- analogy
+
+Rules:
+- Output ONLY valid JSON
+- No markdown
+- No explanations outside JSON
+
 MCQ format:
 {{
-  "type":"mcq",
-  "question":"...",
+  "type": "mcq",
+  "question": "...",
   "options": {{
-      "A":"...",
-      "B":"...",
-      "C":"...",
-      "D":"..."
+    "A": "...",
+    "B": "...",
+    "C": "...",
+    "D": "..."
   }},
-  "answer":"A",
-  "explanation":"..."
+  "answer": "A",
+  "explanation": "..."
 }}
-Fill blank format:
+
+Fill Blank:
 {{
-  "type":"fill_blank",
-  "question":"The capital of France is ____.",
-  "answer":"Paris",
-  "explanation":"Paris is the capital of France."
+  "type": "fill_blank",
+  "question": "The capital of France is ____.",
+  "answer": "Paris",
+  "explanation": "..."
 }}
-One word format:
+
+One Word:
 {{
-  "type":"one_word",
-  "question":"What is the process by which plants make food?",
-  "answer":"Photosynthesis",
-  "explanation":"Plants make food using photosynthesis."
+  "type": "one_word",
+  "question": "What process do plants use to make food?",
+  "answer": "Photosynthesis",
+  "explanation": "..."
 }}
-Analogy format:
+
+Analogy:
 {{
-  "type":"analogy",
-  "question":"Bird : Nest :: Bee : ?",
-  "answer":"Hive",
-  "explanation":"Bees live in hives."
+  "type": "analogy",
+  "question": "Bird : Nest :: Bee : ?",
+  "answer": "Hive",
+  "explanation": "..."
 }}
-Output format:
-[
-  {{
-    "type":"mcq",
-    "question":"...",
-    "options": {{
-      "A":"...",
-      "B":"...",
-      "C":"...",
-      "D":"..."
-    }},
-    "answer":"A",
-    "explanation":"..."
-  }}
-]
+
 {asked_block}
 """.strip()
+
+
 def call_gemini(prompt: str) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -371,7 +434,7 @@ async def upload(file: UploadFile = File(...)):
         
 @app.post("/question")
 def question(req: QuestionRequest):
-    cache_key = f"{req.mode}:{req.subject}:{req.difficulty}:{req.pdf_id}"
+    cache_key = f"{req.mode}:{req.subject}:{req.difficulty}:{req.pdf_id}:{req.question_type}"
     if cache_key not in QUESTION_CACHE:
         QUESTION_CACHE[cache_key] = []
     cache = QUESTION_CACHE[cache_key]
@@ -379,22 +442,29 @@ def question(req: QuestionRequest):
         return cache.pop(0)
     asked = req.asked or []
     try:
+        # ---------- PDF MODE ----------
         if req.mode == "pdf":
             text = PDF_STORE.get(req.pdf_id or "")
             if not text:
-                raise HTTPException(status_code=404, detail="pdf_id not found.")
-            prompt = build_subject_prompt(
-                subject,
-                req.difficulty or "medium",
-                asked
+                raise HTTPException(
+                    status_code=404,
+                    detail="pdf_id not found."
+                )
+            prompt = build_pdf_prompt(
+                text[:MAX_CONTEXT_CHARS],
+                asked,
+                req.question_type
             )
+        # ---------- SUBJECT MODE ----------
         else:
             subject = (req.subject or "General Knowledge").strip()
             prompt = build_subject_prompt(
                 subject,
                 req.difficulty or "medium",
-                asked
+                asked,
+                req.question_type
             )
+        # ---------- AI ----------
         parsed = call_gemini(prompt)
         if not parsed:
             raise RuntimeError("Could not parse AI response")
@@ -414,6 +484,7 @@ def question(req: QuestionRequest):
         fb = fallback_question(asked)
         fb["explanation"] = f"(AI error: {e}) " + fb["explanation"]
         return fb
+
 @app.post("/score")
 def score(req: ScoreRequest):
 
