@@ -183,7 +183,6 @@ def fallback_question(asked: List[str]) -> dict:
         pool = FALLBACK_BANK
     return dict(random.choice(pool))
 
-
 def build_pdf_prompt(context: str, asked: List[str]) -> str:
     asked_block = ""
     if asked:
@@ -211,11 +210,45 @@ def build_subject_prompt(subject: str, difficulty: str, asked: List[str]) -> str
         asked_block = f"\nDo NOT repeat these questions:\n{bullets}\n"
 
     return f"""
-Generate 10 UNIQUE multiple choice questions.
+Generate 10 UNIQUE quiz questions.
 
+Use a MIX of:
+- multiple choice
+- fill in the blanks
+- one word answer
+- analogy questions
+
+Each question should contain:
+
+{
+  "type": "mcq" | "fill_blank" | "one_word" | "analogy",
+  "question": "...",
+  "options": {
+    "A": "...",
+    "B": "...",
+    "C": "...",
+    "D": "..."
+  },
+  "answer": "...",
+  "explanation": "..."
+}
+{
+  "type": "fill_blank",
+  "question": "The capital of France is ____.",
+  "answer": "Paris"
+}
+{
+  "type": "one_word",
+  "question": "What is the process by which plants make food?",
+  "answer": "Photosynthesis"
+}
+{
+  "type": "analogy",
+  "question": "Bird : Nest :: Bee : ?",
+  "answer": "Hive"
+}
 Subject: {subject}
 Difficulty: {difficulty}
-
 Rules:
 - Return ONLY valid JSON
 - Generate exactly 10 questions
@@ -224,9 +257,7 @@ Rules:
   - options (A,B,C,D)
   - answer
   - explanation
-
 JSON format:
-
 [
   {{
     "question": "...",
@@ -240,30 +271,21 @@ JSON format:
     "explanation": "..."
   }}
 ]
-
 {asked_block}
 """.strip()
-
+    
 def call_gemini(prompt: str) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
-
     model_name = pick_model()
     model = genai.GenerativeModel(model_name)
-
     resp = model.generate_content(prompt)
-
     raw = (resp.text or "").strip()
-
     log.info(f"GEMINI RAW RESPONSE: {raw}")
-
     parsed = safe_parse_json(raw)
-
     if not parsed:
         raise RuntimeError(f"Could not parse Gemini JSON: {raw}")
-
     return parsed
-
 
 def normalize_question(parsed: dict) -> Optional[dict]:
     if not parsed or "question" not in parsed or "options" not in parsed or "answer" not in parsed:
@@ -278,7 +300,6 @@ def normalize_question(parsed: dict) -> Optional[dict]:
     parsed.setdefault("explanation", "")
     return parsed
 
-
 # ---------- Routes ----------
 @app.get("/")
 def root():
@@ -287,8 +308,6 @@ def root():
         "version": "4.0.0",
         "endpoints": ["/health", "/models", "/upload", "/question", "/score"],
     }
-
-
 @app.get("/health")
 def health():
     return {
@@ -298,8 +317,6 @@ def health():
         "candidates": MODEL_CANDIDATES,
         "pdfs_loaded": len(PDF_STORE),
     }
-
-
 @app.get("/models")
 def list_models():
     if not GEMINI_API_KEY:
@@ -312,8 +329,6 @@ def list_models():
         return {"models": out}
     except Exception as e:
         return {"error": str(e)}
-
-
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
@@ -344,71 +359,50 @@ async def upload(file: UploadFile = File(...)):
     except Exception as e:
         log.exception("Upload failed")
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
-
-
+        
 @app.post("/question")
 def question(req: QuestionRequest):
-
     cache_key = f"{req.mode}:{req.subject}:{req.difficulty}:{req.pdf_id}"
-
     if cache_key not in QUESTION_CACHE:
         QUESTION_CACHE[cache_key] = []
-
     cache = QUESTION_CACHE[cache_key]
-
     if cache:
         return cache.pop(0)
-
     asked = req.asked or []
-
     try:
         if req.mode == "pdf":
             text = PDF_STORE.get(req.pdf_id or "")
-
             if not text:
                 raise HTTPException(status_code=404, detail="pdf_id not found.")
-
             prompt = build_pdf_prompt(
                 text[:MAX_CONTEXT_CHARS],
                 asked
             )
-
         else:
             subject = (req.subject or "General Knowledge").strip()
-
             prompt = build_subject_prompt(
                 subject,
                 req.difficulty or "medium",
                 asked
             )
-
         parsed = call_gemini(prompt)
         if not parsed:
             raise RuntimeError("Could not parse AI response")
-
         if isinstance(parsed, dict):
             parsed = [parsed]
-
         valid_questions = []
-
         for q in parsed:
             nq = normalize_question(q)
             if nq:
                 valid_questions.append(nq)
-
         if not valid_questions:
             raise RuntimeError("No valid questions generated")
-
         QUESTION_CACHE[cache_key] = valid_questions
-
         return QUESTION_CACHE[cache_key].pop(0)
-
     except Exception as e:
         log.exception("QUESTION ERROR")
-
         fb = fallback_question(asked)
         fb["explanation"] = f"(AI error: {e}) " + fb["explanation"]
-
         return fb
 
 @app.post("/score")
