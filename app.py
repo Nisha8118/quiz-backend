@@ -382,10 +382,7 @@ def question(req: QuestionRequest):
                 asked
             )
 
-        raw = call_gemini(prompt)
-
-        parsed = safe_parse_json(raw)
-
+       parsed = call_gemini(prompt)
         if not parsed:
             raise RuntimeError("Could not parse AI response")
 
