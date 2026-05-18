@@ -1,24 +1,3 @@
-"""
-Quiz Backend v4 - FastAPI + Google Gemini (FREE)
-
-Modes:
-  - Subject mode: pick a subject + difficulty, AI generates a question.
-  - PDF mode:     upload a PDF, AI generates questions from its text.
-
-Endpoints:
-  GET  /            -> info
-  GET  /health      -> health check + model
-  GET  /models      -> list models the API key can access
-  POST /upload      -> upload a PDF -> {pdf_id, pages, chars}
-  POST /question    -> body: {mode, subject?, difficulty?, pdf_id?, asked:[...]} -> one MCQ
-  POST /score       -> body: {question, user_answer} -> {correct, correct_answer, explanation}
-
-Run locally:
-  pip install -r requirements.txt
-  export GEMINI_API_KEY=your_key
-  uvicorn app:app --host 0.0.0.0 --port 8000 --reload
-"""
-
 import os
 import re
 import json
@@ -93,6 +72,7 @@ app.add_middleware(
 )
 
 PDF_STORE: dict = {}
+QUESTION_CACHE: dict = {}
 MAX_CONTEXT_CHARS = 15000
 
 
@@ -111,21 +91,30 @@ class ScoreRequest(BaseModel):
 
 
 # ---------- Helpers ----------
-def safe_parse_json(text: str) -> Optional[dict]:
+def safe_parse_json(text: str):
     if not text:
         return None
-    text = re.sub(r"^```(?:json)?", "", text.strip(), flags=re.IGNORECASE).strip()
-    text = re.sub(r"```$", "", text).strip()
+
+    text = text.strip()
+
+    text = re.sub(r"^```json", "", text)
+    text = re.sub(r"^```", "", text)
+    text = re.sub(r"```$", "", text)
+    text = text.strip()
+
     try:
         return json.loads(text)
     except Exception:
         pass
-    m = re.search(r"\{.*\}", text, re.DOTALL)
+
+    m = re.search(r"(\[.*\]|\{.*\})", text, re.DOTALL)
+
     if m:
         try:
             return json.loads(m.group(0))
         except Exception:
             return None
+
     return None
 
 
@@ -219,23 +208,41 @@ def build_subject_prompt(subject: str, difficulty: str, asked: List[str]) -> str
     asked_block = ""
     if asked:
         bullets = "\n".join(f"- {q}" for q in asked[-20:])
-        asked_block = f"\nDo NOT repeat or paraphrase these previously asked questions:\n{bullets}\n"
-    seed = random.randint(1000, 999999)
-    return f"""You are a quiz generator. Create ONE multiple-choice question.
+        asked_block = f"\nDo NOT repeat these questions:\n{bullets}\n"
+
+    return f"""
+Generate 10 UNIQUE multiple choice questions.
 
 Subject: {subject}
 Difficulty: {difficulty}
-Random seed (use it to vary topic/angle): {seed}
 
 Rules:
-- Provide exactly 4 options labeled A, B, C, D. Exactly one correct.
-- Make the question UNIQUE; vary subtopics each time.
-- Output ONLY a JSON object, no prose, no markdown.
+- Return ONLY valid JSON
+- Generate exactly 10 questions
+- Each question must have:
+  - question
+  - options (A,B,C,D)
+  - answer
+  - explanation
 
-JSON shape:
-{{"question":"...","options":{{"A":"...","B":"...","C":"...","D":"..."}},"answer":"A","explanation":"short reason"}}
-{asked_block}""".strip()
+JSON format:
 
+[
+  {{
+    "question": "...",
+    "options": {{
+      "A": "...",
+      "B": "...",
+      "C": "...",
+      "D": "..."
+    }},
+    "answer": "A",
+    "explanation": "..."
+  }}
+]
+
+{asked_block}
+""".strip()
 
 def call_gemini(prompt: str) -> dict:
     if not GEMINI_API_KEY:
@@ -341,37 +348,71 @@ async def upload(file: UploadFile = File(...)):
 
 @app.post("/question")
 def question(req: QuestionRequest):
+
+    cache_key = f"{req.mode}:{req.subject}:{req.difficulty}:{req.pdf_id}"
+
+    if cache_key not in QUESTION_CACHE:
+        QUESTION_CACHE[cache_key] = []
+
+    cache = QUESTION_CACHE[cache_key]
+
+    if cache:
+        return cache.pop(0)
+
     asked = req.asked or []
 
-    if req.mode == "pdf":
-        text = PDF_STORE.get(req.pdf_id or "")
-        if not text:
-            raise HTTPException(status_code=404, detail="pdf_id not found. Upload again.")
-        prompt = build_pdf_prompt(text[:MAX_CONTEXT_CHARS], asked)
-    else:
-        subject = (req.subject or "General Knowledge").strip()
-        prompt = build_subject_prompt(subject, req.difficulty or "medium", asked)
+    try:
+        if req.mode == "pdf":
+            text = PDF_STORE.get(req.pdf_id or "")
 
-    if not GEMINI_API_KEY:
-        return fallback_question(asked)
+            if not text:
+                raise HTTPException(status_code=404, detail="pdf_id not found.")
 
-    # Try AI up to 2 times
-    last_err = None
-    for _ in range(2):
-        try:
-            parsed = normalize_question(call_gemini(prompt))
-            if parsed and parsed["question"].strip() not in set(asked):
-                return parsed
-        except Exception as e:
-            last_err = e
-            log.warning("Gemini error: %s", e)
-            break
+            prompt = build_pdf_prompt(
+                text[:MAX_CONTEXT_CHARS],
+                asked
+            )
 
-    fb = fallback_question(asked)
-    if last_err:
-        fb["explanation"] = f"(AI error: {last_err}) " + fb["explanation"]
-    return fb
+        else:
+            subject = (req.subject or "General Knowledge").strip()
 
+            prompt = build_subject_prompt(
+                subject,
+                req.difficulty or "medium",
+                asked
+            )
+
+        raw = call_gemini(prompt)
+
+        parsed = safe_parse_json(raw)
+
+        if not parsed:
+            raise RuntimeError("Could not parse AI response")
+
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+
+        valid_questions = []
+
+        for q in parsed:
+            nq = normalize_question(q)
+            if nq:
+                valid_questions.append(nq)
+
+        if not valid_questions:
+            raise RuntimeError("No valid questions generated")
+
+        QUESTION_CACHE[cache_key] = valid_questions
+
+        return QUESTION_CACHE[cache_key].pop(0)
+
+    except Exception as e:
+        log.exception("QUESTION ERROR")
+
+        fb = fallback_question(asked)
+        fb["explanation"] = f"(AI error: {e}) " + fb["explanation"]
+
+        return fb
 
 @app.post("/score")
 def score(req: ScoreRequest):
