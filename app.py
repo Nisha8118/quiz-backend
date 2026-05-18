@@ -293,18 +293,22 @@ def call_gemini(prompt: str) -> dict:
     return parsed
 
 def normalize_question(parsed: dict) -> Optional[dict]:
-    if not parsed or "question" not in parsed or "options" not in parsed or "answer" not in parsed:
+    if not parsed:
         return None
-    opts = parsed.get("options", {})
-    if not all(k in opts for k in ("A", "B", "C", "D")):
+    qtype = parsed.get("type", "mcq")
+    # Basic validation
+    if "question" not in parsed or "answer" not in parsed:
         return None
-    ans = str(parsed.get("answer", "A")).strip().upper()
-    if ans not in ("A", "B", "C", "D"):
-        ans = "A"
-    parsed["answer"] = ans
+    # MCQ validation
+    if qtype == "mcq":
+        opts = parsed.get("options", {})
+        if not all(k in opts for k in ("A", "B", "C", "D")):
+            return None
+    # Non-MCQ question types
+    else:
+        parsed["options"] = {}
     parsed.setdefault("explanation", "")
     return parsed
-
 # ---------- Routes ----------
 @app.get("/")
 def root():
