@@ -407,10 +407,13 @@ def question(req: QuestionRequest):
 
 @app.post("/score")
 def score(req: ScoreRequest):
-    correct = str(req.question.get("answer", "")).strip().upper()
-    user = str(req.user_answer or "").strip().upper()
+    correct = str(req.question.get("answer", "")).strip().lower()
+    user = str(req.user_answer or "").strip().lower()
+    qtype = req.question.get("type", "mcq")
+    if qtype == "mcq":
+        is_correct = user.upper() == correct.upper()
+    else:
+        is_correct = user == correct
     return {
-        "correct": user == correct and correct in ("A", "B", "C", "D"),
-        "correct_answer": correct,
-        "explanation": req.question.get("explanation", ""),
+        "correct": is_correct,
     }
