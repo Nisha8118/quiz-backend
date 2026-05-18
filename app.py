@@ -82,6 +82,7 @@ class QuestionRequest(BaseModel):
     subject: Optional[str] = None
     difficulty: str = "medium"     # easy | medium | hard
     pdf_id: Optional[str] = None
+    question_type: str = "mixed"
     asked: List[str] = Field(default_factory=list)
 
 
@@ -207,73 +208,77 @@ def build_subject_prompt(subject: str, difficulty: str, asked: List[str]) -> str
     asked_block = ""
     if asked:
         bullets = "\n".join(f"- {q}" for q in asked[-20:])
-        asked_block = f"\nDo NOT repeat these questions:\n{bullets}\n"
-
+        asked_block = f"""
+Do NOT repeat these questions:
+{bullets}
+"""
     return f"""
+You are a quiz generator.
 Generate 10 UNIQUE quiz questions.
-
-Use a MIX of:
-- multiple choice
-- fill in the blanks
-- one word answer
-- analogy questions
-
-Each question should contain:
-
-{
-  "type": "mcq" | "fill_blank" | "one_word" | "analogy",
-  "question": "...",
-  "options": {
-    "A": "...",
-    "B": "...",
-    "C": "...",
-    "D": "..."
-  },
-  "answer": "...",
-  "explanation": "..."
-}
-{
-  "type": "fill_blank",
-  "question": "The capital of France is ____.",
-  "answer": "Paris"
-}
-{
-  "type": "one_word",
-  "question": "What is the process by which plants make food?",
-  "answer": "Photosynthesis"
-}
-{
-  "type": "analogy",
-  "question": "Bird : Nest :: Bee : ?",
-  "answer": "Hive"
-}
 Subject: {subject}
 Difficulty: {difficulty}
-Rules:
-- Return ONLY valid JSON
-- Generate exactly 10 questions
-- Each question must have:
-  - question
-  - options (A,B,C,D)
-  - answer
-  - explanation
-JSON format:
+Use a MIX of:
+- mcq
+- fill_blank
+- one_word
+- analogy
+IMPORTANT RULES:
+1. Return ONLY valid JSON
+2. No markdown
+3. No explanations outside JSON
+4. Generate exactly 10 questions
+5. Questions must match the subject
+MCQ format:
+{{
+  "type":"mcq",
+  "question":"...",
+  "options": {{
+      "A":"...",
+      "B":"...",
+      "C":"...",
+      "D":"..."
+  }},
+  "answer":"A",
+  "explanation":"..."
+}}
+Fill blank format:
+{{
+  "type":"fill_blank",
+  "question":"The capital of France is ____.",
+  "answer":"Paris",
+  "explanation":"Paris is the capital of France."
+}}
+One word format:
+{{
+  "type":"one_word",
+  "question":"What is the process by which plants make food?",
+  "answer":"Photosynthesis",
+  "explanation":"Plants make food using photosynthesis."
+}}
+Analogy format:
+{{
+  "type":"analogy",
+  "question":"Bird : Nest :: Bee : ?",
+  "answer":"Hive",
+  "explanation":"Bees live in hives."
+}}
+Output format:
 [
   {{
-    "question": "...",
+    "type":"mcq",
+    "question":"...",
     "options": {{
-      "A": "...",
-      "B": "...",
-      "C": "...",
-      "D": "..."
+      "A":"...",
+      "B":"...",
+      "C":"...",
+      "D":"..."
     }},
-    "answer": "A",
-    "explanation": "..."
+    "answer":"A",
+    "explanation":"..."
   }}
 ]
 {asked_block}
 """.strip()
-    
 def call_gemini(prompt: str) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -374,8 +379,9 @@ def question(req: QuestionRequest):
             text = PDF_STORE.get(req.pdf_id or "")
             if not text:
                 raise HTTPException(status_code=404, detail="pdf_id not found.")
-            prompt = build_pdf_prompt(
-                text[:MAX_CONTEXT_CHARS],
+            prompt = build_subject_prompt(
+                subject,
+                req.difficulty or "medium",
                 asked
             )
         else:
