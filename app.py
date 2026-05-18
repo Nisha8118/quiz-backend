@@ -414,16 +414,30 @@ def question(req: QuestionRequest):
         fb = fallback_question(asked)
         fb["explanation"] = f"(AI error: {e}) " + fb["explanation"]
         return fb
-
 @app.post("/score")
 def score(req: ScoreRequest):
-    correct = str(req.question.get("answer", "")).strip().lower()
-    user = str(req.user_answer or "").strip().lower()
+
     qtype = req.question.get("type", "mcq")
+
+    correct_answer = str(req.question.get("answer", "")).strip()
+    user_answer = str(req.user_answer or "").strip()
+
+    # MCQ
     if qtype == "mcq":
-        is_correct = user.upper() == correct.upper()
+
+        is_correct = (
+            user_answer.upper() == correct_answer.upper()
+        )
+
+    # Text-based answers
     else:
-        is_correct = user == correct
+
+        is_correct = (
+            user_answer.lower() == correct_answer.lower()
+        )
+
     return {
         "correct": is_correct,
+        "correct_answer": correct_answer,
+        "explanation": req.question.get("explanation", ""),
     }
