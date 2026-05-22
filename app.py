@@ -25,7 +25,7 @@ MODEL_NAME = "gemini-3.1-flash-lite"
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    log.info("Gemini configured. Will probe models: %s", MODEL_CANDIDATES)
+    log.info(f"Gemini configured. Using model: {MODEL_NAME}")
 else:
     log.warning("GEMINI_API_KEY not set - AI calls will fail; fallback content used.")
 
