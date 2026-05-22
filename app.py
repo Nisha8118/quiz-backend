@@ -21,17 +21,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 # Try these models in order. The first one that works is used.
 # `gemini-1.5-flash` was retired on the v1beta endpoint; the new free model is
 # `gemini-flash-latest` / `gemini-2.0-flash` / `gemini-2.5-flash`.
-MODEL_CANDIDATES = [
-    os.getenv("GEMINI_MODEL", "").strip(),
-    "gemini-flash-latest",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-001",
-    "gemini-pro-latest",
-]
-MODEL_CANDIDATES = [m for m in MODEL_CANDIDATES if m]
-
-ACTIVE_MODEL: Optional[str] = None
+MODEL_NAME = "gemini-3.1-flash-lite"
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -39,25 +29,6 @@ if GEMINI_API_KEY:
 else:
     log.warning("GEMINI_API_KEY not set - AI calls will fail; fallback content used.")
 
-
-def pick_model() -> str:
-    """Pick the first candidate model that responds. Cached after first success."""
-    global ACTIVE_MODEL
-    if ACTIVE_MODEL:
-        return ACTIVE_MODEL
-    last_err = None
-    for name in MODEL_CANDIDATES:
-        try:
-            m = genai.GenerativeModel(name)
-            r = m.generate_content("ping", generation_config={"max_output_tokens": 5})
-            _ = r.text  # force evaluate
-            ACTIVE_MODEL = name
-            log.info("Using Gemini model: %s", name)
-            return name
-        except Exception as e:
-            last_err = e
-            log.warning("Model %s unavailable: %s", name, e)
-    raise RuntimeError(f"No Gemini model available. Last error: {last_err}")
 
 
 # ---------- App ----------
@@ -340,13 +311,11 @@ Analogy:
 
 {asked_block}
 """.strip()
-
-
+    
 def call_gemini(prompt: str) -> dict:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY not configured")
-    model_name = pick_model()
-    model = genai.GenerativeModel(model_name)
+    model = genai.GenerativeModel(MODEL_NAME)
     resp = model.generate_content(prompt)
     raw = (resp.text or "").strip()
     log.info(f"GEMINI RAW RESPONSE: {raw}")
@@ -385,8 +354,7 @@ def health():
     return {
         "status": "ok",
         "ai_configured": bool(GEMINI_API_KEY),
-        "active_model": ACTIVE_MODEL,
-        "candidates": MODEL_CANDIDATES,
+        "active_model": MODEL_NAME,
         "pdfs_loaded": len(PDF_STORE),
     }
 @app.get("/models")
